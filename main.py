@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 # --- CONFIG ---
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 PORT = int(os.getenv("PORT", 8888))
-ROBLOX_GROUP_ID = 226834839
+ROBLOX_GROUP_ID = 834946484
 ROBLOX_GROUP_URL = "https://www.roblox.com/th/communities/834946484"
 ROBLOX_MAP_URL = "https://www.roblox.com/th/games/74415906392980/unnamed"
 VERIFIED_ROLE_ID = 1508479215908028543
