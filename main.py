@@ -26,7 +26,7 @@ from discord.ext import commands
 # ================================================================
 
 # ใส่ Bot Token ที่คัดลอกจาก Discord Developer Portal ระหว่างเครื่องหมาย " "
-TOKEN = "ใส่โทเคนบอทตรงนี้"
+TOKEN = "MTUzNTI4MDI4NjY4ODg3MDUzNA.G-Aloa.Hh-lE0kJsRpMuFLpaenL_BsfwS9IzwUfW5lJRc"
 
 # ใส่ Role ID ที่ต้องการให้สมาชิกได้รับหลังยืนยันสำเร็จ
 # ค่าเริ่มต้นนี้คือ Role ID ที่คุณส่งมา
@@ -38,7 +38,7 @@ CATEGORY_ID = 0
 
 # ใส่ Channel ID ของห้องแอดมินที่ต้องการรับ Log การยืนยันตัวตน
 # ถ้าไม่ใช้ Log ให้ใส่ 0
-LOG_CHANNEL_ID = 1508479217686413380
+LOG_CHANNEL_ID = 1535263918929223700
 
 # ชื่อไฟล์ฐานข้อมูล ไม่ต้องแก้ก็ได้
 DATABASE_FILE = "verification_data.sqlite3"
