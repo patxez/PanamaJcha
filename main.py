@@ -469,7 +469,6 @@ class TicketSelect(discord.ui.Select):
         cat_display = category_name_map.get(cat_key, "general")
         channel_name = f"ticket-{cat_display}-{interaction.user.name}".lower()
 
-        # สร้าง Overwrites สำหรับช่อง Ticket
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
@@ -491,7 +490,6 @@ class TicketSelect(discord.ui.Select):
             await interaction.response.send_message(f"❌ เกิดข้อผิดพลาดในการสร้างช่อง Ticket: {e}", ephemeral=True)
             return
 
-        # บันทึกลง Database
         conn = sqlite3.connect(DB_PATH)
         conn.execute(
             "INSERT OR REPLACE INTO tickets (channel_id, user_id, category, status) VALUES (?, ?, ?, 'open')",
@@ -500,7 +498,6 @@ class TicketSelect(discord.ui.Select):
         conn.commit()
         conn.close()
 
-        # ส่งข้อความต้อนรับและแท็กเจ้าหน้าที่
         tag_mention = f"<@&{ticket_role_id}>" if ticket_role_id else "@here"
         embed = discord.Embed(
             title=f"🎫 Ticket: {cat_display}",
@@ -617,7 +614,6 @@ async def close_ticket(interaction: discord.Interaction):
 
     await interaction.response.send_message("🔒 กำลังปิด Ticket และอัปเดตสิทธิ์การเข้าถึง...")
 
-    # ปรับสิทธิ์: ปิดการส่งข้อความของผู้ใช้ แต่ยังให้ดูประวัติย้อนหลังได้ (Read History = True, Send Messages = False)
     if member:
         try:
             await channel.set_permissions(member, send_messages=False, read_message_history=True, view_channel=True)
@@ -816,4 +812,4 @@ async def verify_endpoint(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", 
+    uvicorn.run(app, host
