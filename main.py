@@ -32,13 +32,13 @@ DEFAULT_SETTINGS = {
     "roblox_map_url": "https://www.roblox.com/th/games/78189317414125/By",
     "verified_role_id": 1479443343367995579,
     "developer_role_id": 1479469155399766129,
+    "ticket_role_id": 1508479215908028544,
     "role_ids": {
         "or": 1479699133001629797,
         "of_low": 1479699314078122094,
         "of_high": 1479699471603470432,
         "guest": None,
     },
-    # ใช้เมื่อ rank_name จาก Roblox ตรงกับชื่อยศ หรือมีชื่อยศนี้อยู่ใน rank_name
     "rank_prefixes": {
         "or-1": "OR-1, PC",
         "or-2": "OR-2, PEC",
@@ -62,7 +62,6 @@ DEFAULT_SETTINGS = {
     },
 }
 
-# ใส่ Roblox ID ของ Developer ที่นี่
 DEVELOPER_IDS = [5711452462]
 VERIFIED_EMOJI = "✅"
 
@@ -100,7 +99,6 @@ def save_settings(settings):
 
 
 def parse_id(value):
-    """รองรับทั้งตัวเลข ID และรูปแบบ mention เช่น <@&123456789>"""
     if value is None:
         return None
     match = re.search(r"\d+", str(value))
@@ -108,7 +106,7 @@ def parse_id(value):
 
 
 def get_role_id(settings, role_type):
-    if role_type in {"verified", "developer"}:
+    if role_type in {"verified", "developer", "ticket"}:
         return settings.get(f"{role_type}_role_id")
     return settings.get("role_ids", {}).get(role_type)
 
@@ -126,6 +124,16 @@ def init_db():
             roblox_username TEXT,
             verified INTEGER DEFAULT 0,
             pending_roblox_username TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tickets (
+            channel_id TEXT PRIMARY KEY,
+            user_id TEXT,
+            category TEXT,
+            status TEXT DEFAULT 'open'
         )
         """
     )
@@ -171,9 +179,9 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # ทำให้ปุ่มที่สร้างไว้ก่อนบอทรีสตาร์ตยังใช้งานได้
         self.add_view(VerifyView())
         self.add_view(ReVerifyView())
+        self.add_view(TicketPanelView())
         await self.tree.sync()
         print(f"Dev System v6 slash commands synced for {self.user}")
 
@@ -215,16 +223,13 @@ def check_group_membership(roblox_id):
 
 
 def get_prefix_for_rank(rank_val, rank_name, settings):
-    """คืนคำนำหน้าที่ตรงกับชื่อยศที่ตั้งไว้ ถ้าไม่พบให้ใช้ค่าเริ่มต้นตาม Rank ID"""
     prefixes = settings.get("rank_prefixes", {})
     normalized_name = str(rank_name or "").strip().lower()
 
-    # ค่าที่เพิ่มผ่าน /ใส่คำนำหน้า จะถูกเลือกก่อนค่า fallback
     for rank_key, prefix in prefixes.items():
         if str(rank_key).strip().lower() in normalized_name:
             return str(prefix).strip()
 
-    # Fallback สำหรับเซิร์ฟเวอร์ที่ใช้ชื่อยศไม่ตรงกับรหัส เช่น ตั้งชื่อเป็นภาษาไทย
     numeric_fallback = {
         1: "OR-1, PC", 2: "OR-2, PEC", 3: "OR-3, CPL", 4: "OR-4, SGT",
         5: "OR-5, SSG", 6: "OR-6/OR-7, SFC", 7: "OR-6/OR-7, SFC",
@@ -251,6 +256,7 @@ async def update_member_status(discord_id, roblox_id, roblox_username, guild_id=
         role_ids_to_manage = {
             parse_id(settings.get("verified_role_id")),
             parse_id(settings.get("developer_role_id")),
+            parse_id(settings.get("ticket_role_id")),
             *{
                 parse_id(role_id)
                 for role_id in settings.get("role_ids", {}).values()
@@ -258,7 +264,6 @@ async def update_member_status(discord_id, roblox_id, roblox_username, guild_id=
         }
         role_ids_to_manage.discard(None)
 
-        # เก็บโรลอื่นของสมาชิกไว้ ไม่ลบทิ้งทั้งหมดเหมือนโค้ดเดิม
         roles_to_add = [
             role for role in member.roles
             if role != guild.default_role and role.id not in role_ids_to_manage
@@ -295,7 +300,6 @@ async def update_member_status(discord_id, roblox_id, roblox_username, guild_id=
             nickname = f"Guest | {roblox_username}"
             display_rank_name = "Guest"
 
-        # กันโรลซ้ำจากกรณีตั้งค่าบทบาทเดียวกันหลายช่อง
         unique_roles = list({role.id: role for role in roles_to_add}.values())
         await member.edit(roles=unique_roles, nick=nickname[:32])
         return rank_val if not is_dev else 999, member.display_name, display_rank_name
@@ -305,7 +309,7 @@ async def update_member_status(discord_id, roblox_id, roblox_username, guild_id=
 
 
 # =========================
-# UI COMPONENTS
+# UI COMPONENTS (VERIFY)
 # =========================
 class VerifyModal(discord.ui.Modal, title="ยืนยันตัวตน Roblox"):
     username = discord.ui.TextInput(
@@ -366,29 +370,28 @@ class ReVerifyView(discord.ui.View):
 
     @discord.ui.button(label="อัพเดทยศ", style=discord.ButtonStyle.success, custom_id="update_rank")
     async def update_rank(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("กำลังอัพเดทยศ รอสักครู่...", ephemeral=True)
-        user = get_user(interaction.user.id)
-        if user and user["roblox_id"]:
-            rank_val, display_name, rank_name = await update_member_status(
-                interaction.user.id,
-                user["roblox_id"],
-                user["roblox_username"],
-                interaction.guild.id if interaction.guild else None,
+        user_row = get_user(interaction.user.id)
+        if not user_row or not user_row["verified"] or not user_row["roblox_id"]:
+            await interaction.response.send_message(
+                "❌ คุณยังไม่เคยยืนยันตัวตน กรุณายืนยันตัวตนก่อนใช้ปุ่มนี้", ephemeral=True
             )
-            if rank_val is not None:
-                embed = discord.Embed(title=f"{VERIFIED_EMOJI} อัพเดทยศสำเร็จ", color=0x00FF00)
-                embed.description = (
-                    f"ข้อมูลของคุณเป็นปัจจุบันแล้ว\n\n**Roblox:** {user['roblox_username']}\n"
-                    f"**ยศปัจจุบัน:** {rank_name}"
-                )
-                await interaction.edit_original_response(content=None, embed=embed)
-            else:
-                await interaction.edit_original_response(content="❌ เกิดข้อผิดพลาดในการอัพเดทยศ")
-        else:
-            await interaction.edit_original_response(content="❌ ไม่พบข้อมูลการยืนยันของคุณ")
+            return
 
-    @discord.ui.button(label="เปลี่ยน Account", style=discord.ButtonStyle.primary, custom_id="change_acc")
-    async def change_acc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        rank, _, rank_name = await update_member_status(
+            interaction.user.id, user_row["roblox_id"], user_row["roblox_username"], interaction.guild_id
+        )
+        if rank is not None:
+            await interaction.followup.send(
+                f"✅ อัพเดทยศสำเร็จ! ยศปัจจุบัน: **{rank_name}**", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ ไม่สามารถอัพเดทยศได้ กรุณาติดต่อแอดมินหรือลองใหม่อีกครั้ง", ephemeral=True
+            )
+
+    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.primary, custom_id="start_verify")
+    async def start_verify(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(VerifyModal())
 
 
@@ -396,106 +399,164 @@ class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="ยืนยันตัวตน",
-        style=discord.ButtonStyle.success,
-        emoji="✅",
-        custom_id="persistent_verify",
-    )
-    async def start_v(self, interaction: discord.Interaction, button: discord.ui.Button):
-        user = get_user(interaction.user.id)
-        if user and user["verified"]:
-            embed = discord.Embed(title="❗พบข้อมูล Roblox Account อยู่แล้ว❗", color=0x3498DB)
-            embed.add_field(
-                name="ข้อมูลปัจจุบัน:",
-                value=(
-                    f"**Roblox:** {user['roblox_username']}\n"
-                    f"**Roblox ID:** {user['roblox_id']}\n"
-                    f"**สถานะ:** ยืนยันแล้ว {VERIFIED_EMOJI}"
-                ),
-                inline=False,
+    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.success, custom_id="verify_button_main")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(VerifyModal())
+
+
+# =========================
+# TICKET SYSTEM COMPONENTS
+# =========================
+class TicketSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label="แจ้งโปร",
+                description="ใช้แจ้งคนใช้โปรแกรมช่วยเล่นหรือกระทำผิด",
+                emoji="🚨",
+                value="report_cheat"
+            ),
+            discord.SelectOption(
+                label="แจ้งยศไม่เข้า",
+                description="ใช้แจ้งปัญหากรณีศในเกมกับในดิสไม่ตรงกัน",
+                emoji="⚠️",
+                value="rank_issue"
+            ),
+            discord.SelectOption(
+                label="ติดต่อแอดมินทั่วไป",
+                description="สอบถามแอดมินเกี่ยวกับปัญหาทั่วไป",
+                emoji="💬",
+                value="general_admin"
+            ),
+            discord.SelectOption(
+                label="ติดต่อส่งเอกสาร",
+                description="ใช้สำหรับติดต่อส่งเอกสารต่างๆ แก่ทีมงาน",
+                emoji="📄",
+                value="submit_doc"
+            ),
+            discord.SelectOption(
+                label="ติดต่อรับรางวัล",
+                description="ใช้สำหรับติดต่อรับรางวัลจากตู้สุ่มของ",
+                emoji="🎁",
+                value="claim_reward"
+            ),
+        ]
+        super().__init__(
+            placeholder="เลือกหัวข้อที่ต้องการติดต่อ",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="ticket_category_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if not guild:
+            return
+
+        settings = load_settings()
+        ticket_role_id = parse_id(settings.get("ticket_role_id", 1508479215908028544))
+        
+        category_name_map = {
+            "report_cheat": "แจ้งโปร",
+            "rank_issue": "แจ้งยศไม่เข้า",
+            "general_admin": "ติดต่อแอดมิน",
+            "submit_doc": "ส่งเอกสาร",
+            "claim_reward": "รับรางวัล"
+        }
+        
+        cat_key = self.values[0]
+        cat_display = category_name_map.get(cat_key, "general")
+        channel_name = f"ticket-{cat_display}-{interaction.user.name}".lower()
+
+        # สร้าง Overwrites สำหรับช่อง Ticket
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)
+        }
+
+        if ticket_role_id:
+            role = guild.get_role(ticket_role_id)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=channel_name,
+                overwrites=overwrites,
+                topic=f"Ticket เปิดโดย {interaction.user} (ID: {interaction.user.id}) หมวดหมู่: {cat_display}"
             )
-            embed.description = "ต้องการเปลี่ยน Account หรืออัพเดทยศ? กดปุ่มด้านล่าง"
-            await interaction.response.send_message(embed=embed, view=ReVerifyView(), ephemeral=True)
-        else:
-            await interaction.response.send_modal(VerifyModal())
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ เกิดข้อผิดพลาดในการสร้างช่อง Ticket: {e}", ephemeral=True)
+            return
+
+        # บันทึกลง Database
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT OR REPLACE INTO tickets (channel_id, user_id, category, status) VALUES (?, ?, ?, 'open')",
+            (str(ticket_channel.id), str(interaction.user.id), cat_display)
+        )
+        conn.commit()
+        conn.close()
+
+        # ส่งข้อความต้อนรับและแท็กเจ้าหน้าที่
+        tag_mention = f"<@&{ticket_role_id}>" if ticket_role_id else "@here"
+        embed = discord.Embed(
+            title=f"🎫 Ticket: {cat_display}",
+            description=(
+                f"สวัสดีคุณ {interaction.user.mention}\n"
+                f"คุณได้เปิด Ticket ในหมวดหมู่: **{cat_display}**\n\n"
+                "กรุณาระบุรายละเอียดปัญหาหรือส่งหลักฐานให้เจ้าหน้าที่ทราบได้เลยครับ\n"
+                "แอดมินจะทำการตรวจสอบและติดต่อกลับโดยเร็วที่สุด\n\n"
+                "💡 *พิมพ์ `/ปิดช่อง` เพื่อปิด Ticket นี้*"
+            ),
+            color=0x3498DB
+        )
+        embed.set_footer(text="ระบบ Ticket อัตโนมัติ")
+
+        await ticket_channel.send(content=f"{tag_mention} {interaction.user.mention}", embed=embed)
+        await interaction.response.send_message(f"✅ เปิด Ticket ให้คุณแล้วที่: {ticket_channel.mention}", ephemeral=True)
 
 
+class TicketPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+
+# =========================
+# MODALS (CUSTOMIZE)
+# =========================
 class CustomizeAllModal(discord.ui.Modal, title="ปรับแต่งระบบทั้งหมด"):
     group_id = discord.ui.TextInput(
-        label="Roblox Group ID",
-        required=False,
-        placeholder="ใส่ ID กลุ่ม (ตัวเลขเท่านั้น) เช่น 226834839",
+        label="Roblox Group ID", placeholder="เช่น 226834839", required=True
+    )
+    verified_role = discord.ui.TextInput(
+        label="Verified Role ID", placeholder="เช่น 1479443343367995579", required=True
+    )
+    ticket_role = discord.ui.TextInput(
+        label="Ticket Admin/Staff Role ID", placeholder="เช่น 1508479215908028544", required=True
     )
     group_url = discord.ui.TextInput(
-        label="ลิงก์กลุ่ม Roblox",
-        required=False,
-        placeholder="https://www.roblox.com/groups/...",
+        label="Roblox Group URL", placeholder="https://www.roblox.com/groups/...", required=True
     )
     map_url = discord.ui.TextInput(
-        label="ลิงก์แมพ Roblox",
-        required=False,
-        placeholder="https://www.roblox.com/games/...",
-    )
-    prefixes = discord.ui.TextInput(
-        label="คำนำหน้า (แยกด้วย ;) เช่น OF-3=MAJ; OF-4=LTC",
-        required=False,
-        style=discord.TextStyle.paragraph,
-        placeholder="or-1=PC; of-3=MAJ",
-    )
-    role_ids = discord.ui.TextInput(
-        label="Role IDs (แยกด้วย ;) เช่น or=123; guest=456",
-        required=False,
-        style=discord.TextStyle.paragraph,
-        placeholder="verified=ID; or=ID; of_low=ID; of_high=ID; guest=ID",
+        label="Roblox Map URL", placeholder="https://www.roblox.com/th/games/...", required=True
     )
 
     async def on_submit(self, interaction: discord.Interaction):
         settings = load_settings()
-        
-        # อัพเดท Group ID
-        if self.group_id.value.strip():
-            gid = parse_id(self.group_id.value.strip())
-            if gid: settings["roblox_group_id"] = gid
-            
-        if self.group_url.value.strip():
+        try:
+            settings["roblox_group_id"] = int(self.group_id.value.strip())
+            settings["verified_role_id"] = int(self.verified_role.value.strip())
+            settings["ticket_role_id"] = int(self.ticket_role.value.strip())
             settings["roblox_group_url"] = self.group_url.value.strip()
-        if self.map_url.value.strip():
             settings["roblox_map_url"] = self.map_url.value.strip()
-
-        # อัพเดท Prefixes แบบกลุ่ม
-        if self.prefixes.value.strip():
-            for item in self.prefixes.value.split(";"):
-                if "=" not in item: continue
-                k, v = item.split("=", 1)
-                k, v = k.strip().lower(), v.strip()
-                if k and v:
-                    # ถ้าใส่มาแค่ชื่อยศ เช่น "MAJ" จะแปลงเป็น "OF-3, MAJ" ให้ตาม format
-                    if "," not in v and "-" in k:
-                        settings["rank_prefixes"][k] = f"{k.upper()}, {v}"
-                    else:
-                        settings["rank_prefixes"][k] = v
-
-        # อัพเดท Role IDs แบบกลุ่ม
-        if self.role_ids.value.strip():
-            for item in self.role_ids.value.split(";"):
-                if "=" not in item: continue
-                rtype, rid_raw = item.split("=", 1)
-                rtype = rtype.strip().lower()
-                rid = parse_id(rid_raw)
-                if not rid: continue
-                
-                if rtype in {"verified", "developer"}:
-                    settings[f"{rtype}_role_id"] = rid
-                elif rtype in {"or", "of_low", "of_high", "guest"}:
-                    settings["role_ids"][rtype] = rid
-
-        save_settings(settings)
-        await interaction.response.send_message(
-            "✅ ปรับแต่งระบบทั้งหมดและบันทึกค่าเรียบร้อยแล้ว\n"
-            "การตั้งค่าจะมีผลกับสมาชิกที่กดยืนยันใหม่หรือกดอัพเดทยศครั้งถัดไป",
-            ephemeral=True,
-        )
+            save_settings(settings)
+            await interaction.response.send_message("✅ บันทึกการตั้งค่าทั้งหมดเรียบร้อยแล้ว", ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message("❌ ID ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
 
 
 # =========================
@@ -504,7 +565,6 @@ class CustomizeAllModal(discord.ui.Modal, title="ปรับแต่งระ�
 @bot.tree.command(name="ยืนยันตัวตน", description="ตั้งค่าระบบยืนยันตัวตน (Administrator Only)")
 @app_commands.default_permissions(administrator=True)
 async def setup_verify(interaction: discord.Interaction):
-    settings = load_settings()
     embed = discord.Embed(
         title="ระบบยืนยันตัวตนทหารไทย",
         description="กรุณากดปุ่มด้านล่างเพื่อเริ่มการยืนยันตัวตนกับ Roblox",
@@ -512,6 +572,65 @@ async def setup_verify(interaction: discord.Interaction):
     )
     await interaction.channel.send(embed=embed, view=VerifyView())
     await interaction.response.send_message("✅ ตั้งค่าระบบยืนยันตัวตนเรียบร้อยแล้ว", ephemeral=True)
+
+
+@bot.tree.command(name="ตั้งค่าทิกเก็ต", description="ส่งแผงควบคุมระบบ Ticket (Administrator Only)")
+@app_commands.default_permissions(administrator=True)
+async def setup_ticket(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="📬 ระบบติดต่อทีมงาน (Ticket)",
+        description=(
+            "กรุณาเลือกหัวข้อ/หมวดหมู่ที่คุณต้องการติดต่อจากเมนูด้านล่างนี้\n\n"
+            "🚨 **แจ้งโปร:** แจ้งผู้เล่นใช้โปรแกรมช่วยเล่น\n"
+            "⚠️ **แจ้งยศไม่เข้า:** แก้ไขปัญหายศในเกมกับดิสไม่ตรงกัน\n"
+            "💬 **ติดต่อแอดมินทั่วไป:** สอบถามปัญหาทั่วไป\n"
+            "📄 **ติดต่อส่งเอกสาร:** ส่งเอกสารให้ทีมงาน\n"
+            "🎁 **ติดต่อรับรางวัล:** รับรางวัลจากตู้สุ่ม"
+        ),
+        color=0x2B2D31
+    )
+    embed.set_footer(text="ระบบ Ticket อัตโนมัติ")
+    await interaction.channel.send(embed=embed, view=TicketPanelView())
+    await interaction.response.send_message("✅ ส่งแผงควบคุม Ticket เรียบร้อยแล้ว", ephemeral=True)
+
+
+@bot.tree.command(name="ปิดช่อง", description="ปิด Ticket ปัจจุบันและอนุญาตให้อดูประวัติย้อนหลังได้ (Admin Only)")
+@app_commands.default_permissions(administrator=True)
+async def close_ticket(interaction: discord.Interaction):
+    channel = interaction.channel
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM tickets WHERE channel_id = ?", (str(channel.id),)).fetchone()
+    
+    if not row:
+        conn.close()
+        await interaction.response.send_message("❌ คำสั่งนี้ใช้ได้เฉพาะในช่อง Ticket เท่านั้น", ephemeral=True)
+        return
+
+    conn.execute("UPDATE tickets SET status = 'closed' WHERE channel_id = ?", (str(channel.id),))
+    conn.commit()
+    conn.close()
+
+    user_id = int(row["user_id"])
+    guild = interaction.guild
+    member = guild.get_member(user_id)
+
+    await interaction.response.send_message("🔒 กำลังปิด Ticket และอัปเดตสิทธิ์การเข้าถึง...")
+
+    # ปรับสิทธิ์: ปิดการส่งข้อความของผู้ใช้ แต่ยังให้ดูประวัติย้อนหลังได้ (Read History = True, Send Messages = False)
+    if member:
+        try:
+            await channel.set_permissions(member, send_messages=False, read_message_history=True, view_channel=True)
+        except discord.HTTPException:
+            pass
+
+    embed_closed = discord.Embed(
+        title="🔒 Ticket ถูกปิดแล้ว",
+        description=f"Ticket นี้ถูกปิดโดย {interaction.user.mention}\nคุณยังสามารถดูประวัติการสนทนาย้อนหลังได้ แต่ไม่สามารถพิมพ์ข้อความเพิ่มได้แล้ว",
+        color=0xE74C3C
+    )
+    embed_closed.set_footer(text="ประวัติ Ticket ถูกบันทึกไว้เรียบร้อย")
+    await channel.send(embed=embed_closed)
 
 
 async def clear_verification_data(interaction: discord.Interaction):
@@ -531,7 +650,6 @@ async def reset_db_short(interaction: discord.Interaction):
     await clear_verification_data(interaction)
 
 
-# คงคำสั่งเดิมไว้เพื่อไม่ให้เซิร์ฟเวอร์ที่เคยใช้คำสั่งนี้เสียการทำงาน
 @bot.tree.command(name="ล้างข้อมูลทั้งหมด", description="ลบข้อมูลการยืนยันตัวตนทุกคน (คำสั่งเดิม)")
 @app_commands.default_permissions(administrator=True)
 async def reset_db_legacy(interaction: discord.Interaction):
@@ -541,13 +659,14 @@ async def reset_db_legacy(interaction: discord.Interaction):
 @bot.tree.command(name="ใส่โรล", description="ตั้งค่า Role ให้กับประเภทที่เลือก")
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(
-    ประเภท="verified, developer, or, of_low, of_high หรือ guest",
+    ประเภท="verified, developer, ticket, or, of_low, of_high หรือ guest",
     โรล="เลือก Role ที่ต้องการให้ระบบใช้",
 )
 @app_commands.choices(
     ประเภท=[
         app_commands.Choice(name="ยืนยันตัวตน", value="verified"),
         app_commands.Choice(name="Developer", value="developer"),
+        app_commands.Choice(name="Ticket Staff", value="ticket"),
         app_commands.Choice(name="OR", value="or"),
         app_commands.Choice(name="OF Low", value="of_low"),
         app_commands.Choice(name="OF High", value="of_high"),
@@ -557,7 +676,7 @@ async def reset_db_legacy(interaction: discord.Interaction):
 async def set_role(interaction: discord.Interaction, ประเภท: app_commands.Choice[str], โรล: discord.Role):
     settings = load_settings()
     role_type = ประเภท.value
-    if role_type in {"verified", "developer"}:
+    if role_type in {"verified", "developer", "ticket"}:
         settings[f"{role_type}_role_id"] = โรล.id
     else:
         settings["role_ids"][role_type] = โรล.id
@@ -605,6 +724,7 @@ async def show_settings(interaction: discord.Interaction):
     embed = discord.Embed(title="การตั้งค่าระบบปัจจุบัน", color=0x3498DB)
     embed.add_field(name="Group ID", value=str(settings.get("roblox_group_id")), inline=False)
     embed.add_field(name="Verified Role ID", value=str(settings.get("verified_role_id")), inline=False)
+    embed.add_field(name="Ticket Role ID", value=str(settings.get("ticket_role_id")), inline=False)
     embed.add_field(
         name="Role IDs",
         value=(
@@ -697,25 +817,3 @@ async def verify_endpoint(request: Request):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
-# วิธีใช้คำสั่งใหม่
-# /ใส่โรล ประเภท: OR โรล: @ชื่อโรล
-# /ใส่คำนำหน้า ยศ: OF-3 คำนำหน้า: MAJ
-# /ปรับแต่งทั้งหมด แล้วกรอก prefixes เป็น OF-3=MAJ; OF-4=LTC
-# /ดูการตั้งค่า
-# /ล้างข้อมูล หรือ /ล้างข้อมูลทั้งหมด
-# หมายเหตุ: ต้องเปิด Server Members Intent และให้บอทมี Manage Roles / Manage Nicknames
-# รวมถึงลาก Role ของบอทให้อยู่สูงกว่า Role ที่บอทต้องจัดการ
-
-# อ้างอิงไฟล์เดิมเก็บไว้ที่ pasted_content.backup.txt
-# สร้าง settings.json อัตโนมัติเมื่อรันครั้งแรก
-# ใน webhook สามารถส่ง guildId เพิ่มได้ เช่น {"guildId": "123456789"}
-# หากไม่ส่ง guildId ระบบจะใช้เซิร์ฟเวอร์แรกที่บอทเข้าร่วมเหมือนพฤติกรรมเดิม
-
-# สิ้นสุดไฟล์
-
-# หมายเหตุ: บรรทัดคอมเมนต์ด้านล่างนี้ใช้เพื่อย้ำรูปแบบคำสั่งภาษาไทยเท่านั้น
-# /ยืนยันตัวตน ยังคงเป็นคำสั่งตั้งค่าข้อความปุ่มยืนยันตัวตน
-# /ล้างข้อมูล และ /ล้างข้อมูลทั้งหมด ยังคงล้างเฉพาะข้อมูลในตาราง users
-
-# ขอบคุณที่ซื้อนะค้าบ❤️❤️
