@@ -360,7 +360,7 @@ async def generate_transcript(channel, ticket_user, closed_by, category):
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
-        opts = [discord.SelectOption(label=l, emoji=e, value=l) for l, e in [("แจ้งโปร","🚨"),("แจ้งยศไม่เข้า","⚠️"),("ติดต่อแอดมิน","💬"),("ส่งเอกสาร","📄"),("รับรางวัล","🎁")]]
+        opts = [discord.SelectOption(label=l, emoji=e, value=l) for l, e in [("Report Cheater","❗️"),("Contact Admin","💬")]]
         super().__init__(placeholder="เลือกหัวข้อที่ต้องการติดต่อ", options=opts, custom_id="ticket_select_main")
     async def callback(self, it: discord.Interaction):
         s = load_settings(); tid = parse_id(s.get("ticket_role_id", 1508479215908028544))
