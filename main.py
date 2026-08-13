@@ -182,6 +182,7 @@ class TicketSelect(discord.ui.Select):
         ]
         super().__init__(placeholder="เลือกหัวข้อที่ต้องการติดต่อ", options=opts, custom_id="t_sel")
     async def callback(self, it: discord.Interaction):
+        await it.response.defer(ephemeral=True)
         s = load_settings(); tid = parse_id(s.get("ticket_role_id", 1508479215908028544))
         name = f"ticket-{self.values[0]}-{it.user.name}".lower(); g = it.guild
         ov = {g.default_role: discord.PermissionOverwrite(view_channel=False), it.user: discord.PermissionOverwrite(view_channel=True, send_messages=True), g.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
@@ -191,9 +192,9 @@ class TicketSelect(discord.ui.Select):
         ch = await g.create_text_channel(name=name, overwrites=ov)
         conn = sqlite3.connect(DB_PATH); conn.execute("INSERT INTO tickets (channel_id, user_id, category) VALUES (?, ?, ?)", (str(ch.id), str(it.user.id), self.values[0])); conn.commit(); conn.close()
         tag = f"<@&{tid}>" if tid else "@here"
-        em = discord.Embed(title=f"🎫 Ticket: {self.values[0]}", description=f"สวัสดี {it.user.mention} กรุณาแจ้งรายละเอียด\nพิมพ์ `/ปิดช่อง` เพื่อปิดและบันทึกประวัติ", color=0x3498DB)
+        em = discord.Embed(title=f"🎫 Ticket: {self.values[0]}", description=f"สวัสดี {it.user.mention} กรุณาแจ้งรายละเอียด\nพิมพ์ `/ปิดช่อง` เพื่อปิดและลบช่อง", color=0x3498DB)
         await ch.send(content=f"{tag} {it.user.mention}", embed=em)
-        await it.response.send_message(f"✅ เปิดแล้วที่ {ch.mention}", ephemeral=True)
+        await it.followup.send(f"✅ เปิดแล้วที่ {ch.mention}", ephemeral=True)
 
 class TicketPanelView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None); self.add_item(TicketSelect())
@@ -207,9 +208,9 @@ async def setup_v(it: discord.Interaction):
 @bot.tree.command(name="ตั้งค่าทิกเก็ต")
 @app_commands.default_permissions(administrator=True)
 async def setup_t(it: discord.Interaction):
-    await it.response.defer(ephemeral=True)
-    await it.channel.send(embed=discord.Embed(title="📬 ระบบติดต่อทีมงาน", description="เลือกหมวดหมู่", color=0x2B2D31), view=TicketPanelView())
-    await it.followup.send("✅ OK", ephemeral=True)
+    await it.response.send_message("กำลังส่งแผงควบคุม Ticket...", ephemeral=True)
+    await it.channel.send(embed=discord.Embed(title="📬 ระบบติดต่อทีมงาน", description="เลือกหัวข้อที่ต้องการติดต่อจากเมนูด้านล่าง", color=0x2B2D31), view=TicketPanelView())
+    await it.edit_original_response(content="✅ ส่งแผงควบคุม Ticket เรียบร้อยแล้ว")
 
 @bot.tree.command(name="ปิดช่อง")
 @app_commands.default_permissions(administrator=True)
@@ -228,7 +229,7 @@ async def close_t(it: discord.Interaction):
             em.add_field(name="หมวดหมู่", value=row["category"]); em.add_field(name="ผู้เปิด", value=f"<@{row['user_id']}>"); em.add_field(name="ผู้ปิด", value=it.user.mention)
             await ts_ch.send(embed=em, file=file)
     conn.execute("UPDATE tickets SET status = 'closed' WHERE channel_id = ?", (str(it.channel.id),)); conn.commit(); conn.close()
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
     await it.channel.delete()
 
 @bot.tree.command(name="ตั้งช่องประวัติ")
