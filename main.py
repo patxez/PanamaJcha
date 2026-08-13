@@ -175,7 +175,11 @@ class CustomizeAllModal(discord.ui.Modal, title="ปรับแต่งระ�
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
-        opts = [discord.SelectOption(label=l, emoji=e, value=l) for l, e in [("แจ้งโปร","🚨"),("แจ้งยศไม่เข้า","⚠️"),("ติดต่อแอดมิน","💬"),("ส่งเอกสาร","📄"),("รับรางวัล","🎁")]]
+        opts = [
+            discord.SelectOption(label="Report Cheater", emoji="❗️", value="Report Cheater"),
+            discord.SelectOption(label="Claim Reward", emoji="🪄", value="Claim Reward"),
+            discord.SelectOption(label="General Contact", emoji="💭", value="General Contact")
+        ]
         super().__init__(placeholder="เลือกหัวข้อที่ต้องการติดต่อ", options=opts, custom_id="t_sel")
     async def callback(self, it: discord.Interaction):
         s = load_settings(); tid = parse_id(s.get("ticket_role_id", 1508479215908028544))
@@ -187,7 +191,7 @@ class TicketSelect(discord.ui.Select):
         ch = await g.create_text_channel(name=name, overwrites=ov)
         conn = sqlite3.connect(DB_PATH); conn.execute("INSERT INTO tickets (channel_id, user_id, category) VALUES (?, ?, ?)", (str(ch.id), str(it.user.id), self.values[0])); conn.commit(); conn.close()
         tag = f"<@&{tid}>" if tid else "@here"
-        em = discord.Embed(title=f"🎫 Ticket: {self.values[0]}", description=f"สวัสดี {it.user.mention} กรุณาแจ้งรายละเอียด\nพิมพ์ `/ปิดช่อง` เพื่อปิด", color=0x3498DB)
+        em = discord.Embed(title=f"🎫 Ticket: {self.values[0]}", description=f"สวัสดี {it.user.mention} กรุณาแจ้งรายละเอียด\nพิมพ์ `/ปิดช่อง` เพื่อปิดและบันทึกประวัติ", color=0x3498DB)
         await ch.send(content=f"{tag} {it.user.mention}", embed=em)
         await it.response.send_message(f"✅ เปิดแล้วที่ {ch.mention}", ephemeral=True)
 
@@ -212,7 +216,8 @@ async def setup_t(it: discord.Interaction):
 async def close_t(it: discord.Interaction):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; row = conn.execute("SELECT * FROM tickets WHERE channel_id = ?", (str(it.channel.id),)).fetchone()
     if not row: return await it.response.send_message("❌ ไม่ใช่ช่อง Ticket", ephemeral=True)
-    await it.response.send_message("🔒 กำลังบันทึกประวัติและปิด Ticket..."); s = load_settings(); u = it.guild.get_member(int(row["user_id"]))
+    await it.response.send_message("🔒 กำลังบันทึกประวัติและลบช่อง Ticket...")
+    s = load_settings(); u = it.guild.get_member(int(row["user_id"]))
     html = await generate_transcript(it.channel, u or row["user_id"], it.user, row["category"])
     file = discord.File(io.BytesIO(html.encode()), filename=f"transcript-{it.channel.name}.html")
     ts_id = parse_id(s.get("transcript_channel_id"))
@@ -223,8 +228,8 @@ async def close_t(it: discord.Interaction):
             em.add_field(name="หมวดหมู่", value=row["category"]); em.add_field(name="ผู้เปิด", value=f"<@{row['user_id']}>"); em.add_field(name="ผู้ปิด", value=it.user.mention)
             await ts_ch.send(embed=em, file=file)
     conn.execute("UPDATE tickets SET status = 'closed' WHERE channel_id = ?", (str(it.channel.id),)); conn.commit(); conn.close()
-    if u: await it.channel.set_permissions(u, send_messages=False, read_message_history=True, view_channel=True)
-    await it.channel.send("✅ ปิดและบันทึกประวัติแล้ว")
+    await asyncio.sleep(5)
+    await it.channel.delete()
 
 @bot.tree.command(name="ตั้งช่องประวัติ")
 @app_commands.default_permissions(administrator=True)
